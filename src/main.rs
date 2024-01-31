@@ -46,6 +46,11 @@ fn is_prime(n: usize) -> bool {
 }
 
 fn main() {
+  impl_b();
+}
+
+// shared memory concurrency
+fn impl_a() {
   // read args. expecting 3 args
   let args: Vec<String> = std::env::args().collect();
   if args.len() != 4 {
@@ -143,6 +148,85 @@ fn main() {
     let data = data.lock().unwrap();
     println!("Thread {}: {} primes", data.thread_id, data.primes_count);
     total_primes += data.primes_count;
+  }
+
+  println!("\nTotal prime numbers found: {}", total_primes);
+  writeln!(output_file.lock().unwrap(), "Total prime numbers found: {}", total_primes).unwrap();
+}
+
+// message passing concurrency
+fn impl_b() {
+  // read args. expecting 3 args
+  let args: Vec<String> = std::env::args().collect();
+  if args.len() != 4 {
+    eprintln!("Usage: {} <filename> <num_threads> <output_filename>", args[0]);
+    std::process::exit(1);
+  }
+
+  // parse args
+  let filename = &args[1];
+  let num_threads = args[2].parse::<usize>().unwrap();
+  let output_filename = &args[3];
+  
+  // open output file. it can be created if it doesn't exist
+  let output_file = std::fs::OpenOptions::new()
+    .write(true)
+    .create(true)
+    .open(output_filename)
+    .expect("Error opening output file");
+
+  let output_file = Arc::new(Mutex::new(output_file));
+  let (stats_tx, stats_rx) = std::sync::mpsc::channel::<(usize, usize)>();
+
+  // read the contents of the file into an array and close it
+  let numbers = read_file(filename);
+  let num_len = numbers.len();
+
+  // split the numbers into chunks
+  let slice_size = num_len / num_threads;
+  let mut chunks: Vec<Vec<usize>> = Vec::new();
+  for i in 0..num_threads {
+    let start = i * slice_size;
+    let end = if i == num_threads - 1 {
+      num_len
+    } else {
+      start + slice_size
+    };
+    chunks.push(numbers[start..end].to_vec());
+  }
+
+  // dispatch threads
+  let mut handles = vec![];
+  
+  for (i, chunk) in chunks.into_iter().enumerate() {
+    let stats_tx = stats_tx.clone();
+    let output_file_handle = Arc::clone(&output_file);
+    let handle = thread::spawn(move || {
+      let mut primes: Vec<usize> = Vec::new();
+      for number in chunk {
+        if is_prime(number) {
+          primes.push(number);
+        }
+      }
+      let mut output_file = output_file_handle.lock().unwrap();
+      for prime in primes.iter() {
+        writeln!(output_file, "{}", prime).unwrap();
+      }
+      stats_tx.send((i, primes.len())).unwrap();
+    });
+    handles.push(handle);
+  }
+
+  for handle in handles {
+    handle.join().unwrap();
+  }
+
+  // print the number of primes found by each thread
+  let mut total_primes = 0;
+  for _ in 0..num_threads {
+    let (thread_id, primes) = stats_rx.recv().unwrap();
+    println!("Thread {}: {} primes", thread_id, primes);
+    total_primes += primes;
   }
 
   println!("\nTotal prime numbers found: {}", total_primes);
