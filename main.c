@@ -67,13 +67,19 @@ void* thread_compute_primes(void *arg) {
   ThreadData *data = (ThreadData *)arg;
   int count = 0;
 
+  int* primes = malloc(data->data.size * sizeof(int));
+
   for (int i = 0; i < data->data.size; ++i) {
     if (is_prime(data->data.array[i])) {
-      pthread_mutex_lock(data->mutex);
+      primes[count] = data->data.array[i];
       count++;
-      fprintf(data->output_file, "%d\n", data->data.array[i]);
-      pthread_mutex_unlock(data->mutex);
     }
+  }
+
+  for (int i = 0; i < count; ++i) {
+    pthread_mutex_lock(data->mutex);
+    fprintf(data->output_file, "%d\n", primes[i]);
+    pthread_mutex_unlock(data->mutex);
   }
 
   data->count = count;
